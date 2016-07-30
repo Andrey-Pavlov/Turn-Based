@@ -13,22 +13,8 @@ public class RandomNetObstacleGenerator : NetworkBehaviour
     public Transform ObstaclesParent;
     public GameObject ObstaclePrefab;
 
-    public CellGrid CellGrid;
-
-    public void Start()
+    public List<GameObject> CreateObstacles(List<Cell> cells)
     {
-        StartCoroutine(SpawnObstacles());
-    }
-
-    public IEnumerator SpawnObstacles()
-    {
-        while (CellGrid.Cells == null)
-        {
-            yield return 0;
-        }
-
-        var cells = CellGrid.Cells;
-
         List<GameObject> ret = new List<GameObject>();
 
         if (ObstaclesParent.childCount != 0)
@@ -62,8 +48,8 @@ public class RandomNetObstacleGenerator : NetworkBehaviour
             obstacle.transform.position = cell.transform.position + new Vector3(0, 0, -1f);
             obstacle.transform.parent = ObstaclesParent.transform;
             ret.Add(obstacle);
-
-			NetworkServer.Spawn(obstacle);
         }
+
+        return ret;
     }
 }
