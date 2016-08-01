@@ -15,8 +15,6 @@ public class CellGrid : NetworkBehaviour
     public event EventHandler GameEnded;
     public event EventHandler TurnEnded;
 
-    public MYNetworkManager myNetworkManager;
-
     private CellGridState _cellGridState;//The grid delegates some of its behaviours to cellGridState object.
     public CellGridState CellGridState
     {
@@ -42,8 +40,6 @@ public class CellGrid : NetworkBehaviour
 
     [SyncVar]
     public int CurrentPlayerNumber;
-    [SyncVar]
-    public int CurrentNumberOfPlayers;
 
     //public Transform PlayersParent;
     public GameObject MapPrefab;
@@ -72,29 +68,10 @@ public class CellGrid : NetworkBehaviour
         }
     }
 
-    public override void OnStartServer()
+    private System.Random _rnd = new System.Random();
+
+    private List<Cell> GenerateCells()
     {
-        //Players = new Queue<Player>();
-        //for (int i = 0; i < PlayersParent.childCount; i++)
-        //{
-        //    var player = PlayersParent.GetChild(i).GetComponent<Player>();
-        //    if (player != null)
-        //        Players.Add(player);
-        //    else
-        //        Debug.LogError("Invalid object in Players Parent game object");
-        //}
-        //CurrentPlayerNumber = Players.Min(p => p.PlayerNumber);
-
-        //Cells = new List<Cell>();
-        //for (int i = 0; i < transform.childCount; i++)
-        //{
-        //    var cell = transform.GetChild(i).gameObject.GetComponent<Cell>();
-        //    if (cell != null)
-        //        Cells.Add(cell);
-        //    else
-        //        Debug.LogError("Invalid object in cells paretn game object");
-        //}
-
         var cells = new List<Cell>();
 
         for (int y = 0; y < 9; y++)
@@ -105,32 +82,52 @@ public class CellGrid : NetworkBehaviour
 
                 obj.transform.position = new Vector3(x, y, 0f);
 
-                var cell = obj.GetComponent<Cell>();
-                cell.OffsetCoord = new Vector2(x, y);
+                var cell1 = obj.GetComponent<Cell>();
+                cell1.OffsetCoord = new Vector2(x, y);
 
-                if (cell != null) { }
-                //Cells.Add(cell);
+                if (cell1 != null)
+                {
+                    cells.Add(cell1);
+
+                    NetworkServer.Spawn(cell1.gameObject);
+                }
                 else
                     Debug.LogError("Invalid object in cells paretn game object");
-
-                cell.CellClicked += OnCellClicked;
-                cell.CellHighlighted += OnCellHighlighted;
-                cell.CellDehighlighted += OnCellDehighlighted;
-
-                cells.Add(cell);
             }
         }
 
-        foreach (var cell in cells)
-        {
-            NetworkServer.Spawn(cell.gameObject);
-        }
+        return cells;
+    }
 
-        var obstacles = GetComponent<RandomNetObstacleGenerator>().CreateObstacles(cells);
-        foreach (var obstacle in obstacles)
+    #region Obstacles
+
+    public int ObstaclesAmount;
+    public GameObject ObstaclePrefab;
+
+    private void GenerateObstacles(List<Cell> cells)
+    {
+        List<Cell> freeCells = cells.FindAll(h => h.GetComponent<Cell>().IsTaken == false);
+        freeCells = freeCells.OrderBy(h => _rnd.Next()).ToList();
+
+        for (int i = 0; i < Mathf.Clamp(ObstaclesAmount, ObstaclesAmount, freeCells.Count); i++)
         {
+            var cell = freeCells.ElementAt(i);
+            cell.GetComponent<Cell>().IsTaken = true;
+
+            var obstacle = Instantiate(ObstaclePrefab);
+            obstacle.transform.position = cell.transform.position + new Vector3(0, 0, -1f);
+
             NetworkServer.Spawn(obstacle);
         }
+    }
+
+    #endregion
+
+    public override void OnStartServer()
+    {
+        List<Cell> cells = GenerateCells();
+
+        GenerateObstacles(cells);
 
         StartCoroutine(StartGameCoroutine());
     }
@@ -143,6 +140,22 @@ public class CellGrid : NetworkBehaviour
         }
 
         StartGame();
+    }
+
+    private void InitGame()
+    {
+        foreach (var cell in Cells)
+        {
+            cell.CellClicked += OnCellClicked;
+            cell.CellHighlighted += OnCellHighlighted;
+            cell.CellDehighlighted += OnCellDehighlighted;
+        }
+
+        foreach (var unit in Units)
+        {
+            unit.UnitClicked += OnUnitClicked;
+            unit.UnitDestroyed += OnUnitDestroyed;
+        }
     }
 
     #region Events
@@ -160,24 +173,15 @@ public class CellGrid : NetworkBehaviour
         CellGridState.OnCellClicked(sender as Cell);
     }
 
-    //private void OnUnitClicked(object sender, EventArgs e)
-    //{
-    //    CellGridState.OnUnitClicked(sender as Unit);
-    //}
-
-    //private void OnUnitDestroyed(object sender, AttackEventArgs e)
-    //{
-    //    Units.Remove(sender as Unit);
-    //    var totalPlayersAlive = Units.Select(u => u.PlayerNumber).Distinct().ToList(); //Checking if the game is over
-    //    if (totalPlayersAlive.Count == 1)
-    //    {
-    //        if (GameEnded != null)
-    //            GameEnded.Invoke(this, new EventArgs());
-    //    }
-    //}
-
-    public void OnUnitDestroyed()
+    private void OnUnitClicked(object sender, EventArgs e)
     {
+        CellGridState.OnUnitClicked(sender as Unit);
+    }
+
+    private void OnUnitDestroyed(object sender, AttackEventArgs e)
+    {
+        Units.Remove(sender as Unit);
+
         var totalPlayersAlive = Units.Select(u => u.PlayerNumber).Distinct().ToList(); //Checking if the game is over
         if (totalPlayersAlive.Count == 1)
         {
@@ -193,12 +197,10 @@ public class CellGrid : NetworkBehaviour
     /// </summary>
     public void StartGame()
     {
-        CurrentPlayerNumber = Players[0].PlayerNumber;
-
         if (GameStarted != null)
             GameStarted.Invoke(this, new EventArgs());
 
-        Action();
+        Action(true);
     }
 
     /// <summary>
@@ -212,13 +214,6 @@ public class CellGrid : NetworkBehaviour
 
     [ClientRpc]
     public void RpcEndTurn()
-    {
-        EndPreviousTurn();
-
-        StartNextTurn();
-    }
-
-    public void EndTurn()
     {
         EndPreviousTurn();
 
@@ -249,7 +244,7 @@ public class CellGrid : NetworkBehaviour
         Action();
     }
 
-    private void Action()
+    private void Action(bool isStart = false)
     {
         var currentPlayer = Players.First(p => p.PlayerNumber.Equals(CurrentPlayerNumber));
 
@@ -257,6 +252,52 @@ public class CellGrid : NetworkBehaviour
         {
             Units.FindAll(u => u.PlayerNumber.Equals(CurrentPlayerNumber)).ForEach(u => { u.OnTurnStart(); });
             Players.First(p => p.PlayerNumber.Equals(CurrentPlayerNumber)).Play(this);
+
+            if(isStart)
+            {
+                InitGame();
+            }
         }
     }
+
+    #region Spawn Units
+
+    public GameObject UnitPrefab;
+    public int UnitsPerPlayer;
+
+    public void SpawnUnits(HumanPlayer player)
+    {
+        List<Cell> freeCells = Cells.FindAll(h => h.GetComponent<Cell>().IsTaken == false);
+        freeCells = freeCells.OrderBy(h => _rnd.Next()).ToList();
+
+        for (int j = 0; j < UnitsPerPlayer; j++)
+        {
+            var cell = freeCells.ElementAt(0);
+
+            var unit = Instantiate(UnitPrefab);
+            unit.transform.position = cell.transform.position + new Vector3(0, 0, 0);
+
+            freeCells.RemoveAt(0);
+            cell.GetComponent<Cell>().IsTaken = true;
+
+            unit.GetComponent<Unit>().PlayerNumber = player.PlayerNumber;
+            unit.GetComponent<Unit>().Cell = cell.GetComponent<Cell>();
+            unit.GetComponent<Unit>().Initialize();
+
+            var unitClass = unit.GetComponent<Unit>();
+
+            Units.Add(unitClass);
+
+            CmdSpawn(unit, player.gameObject);
+        }
+
+    }
+
+    [Command]
+    void CmdSpawn(GameObject gameObject, GameObject player)
+    {
+        NetworkServer.SpawnWithClientAuthority(gameObject, player);
+    }
+
+    #endregion
 }
